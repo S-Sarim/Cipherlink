@@ -1,0 +1,22 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Secret {
+  id          String   @id
+  ciphertext  String
+  iv          String
+  salt        String?
+  hasPassword Boolean  @default(false)
+  expiresAt   DateTime
+  maxViews    Int      @default(1)
+  viewCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([expiresAt])
+}
