@@ -7,8 +7,22 @@ import { rateLimit, clientKey } from "@/lib/ratelimit";
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
+  // Origin check defends against server-to-server abuse where browsers
+  // can't enforce CORS. Browsers always send Origin on cross-origin POSTs.
+  const expectedOrigin = process.env.APP_ORIGIN;
+  if (expectedOrigin) {
+    const origin = request.headers.get("origin");
+    if (origin !== expectedOrigin) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
   const ip = clientKey(request.headers);
-  const rl = rateLimit(`create:${ip}`, { capacity: 10, refillPerSec: 0.2 });
+  const rl = await rateLimit(ip, {
+    name: "create",
+    capacity: 10,
+    windowSec: 60,
+  });
   if (!rl.allowed) {
     return Response.json(
       { error: "Too many requests" },

@@ -1,50 +1,98 @@
-// In-memory token bucket rate limiter. Sufficient for a single-process
-// localhost demo. For multi-instance production, swap to Redis/Upstash.
+// Rate limiting. Backed by Upstash Redis (sliding window) when the env vars
+// are present, otherwise falls back to an in-process token bucket so local
+// dev works without any Redis setup.
+//
+// On serverless platforms (Vercel) the in-memory fallback is per-invocation
+// and effectively no limit. Production deployments MUST set
+// UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN.
 
-type Bucket = { tokens: number; updatedAt: number };
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
 
-const buckets = new Map<string, Bucket>();
-
-const SWEEP_INTERVAL_MS = 60_000;
-let lastSweep = 0;
-
-function sweep(now: number, idleMs: number) {
-  if (now - lastSweep < SWEEP_INTERVAL_MS) return;
-  lastSweep = now;
-  for (const [k, v] of buckets) {
-    if (now - v.updatedAt > idleMs) buckets.delete(k);
-  }
-}
+export type RateLimitName = "create" | "read";
 
 export type RateLimitOptions = {
+  name: RateLimitName;
   capacity: number;
-  refillPerSec: number;
+  windowSec: number;
 };
 
-export function rateLimit(
-  key: string,
-  opts: RateLimitOptions,
-): { allowed: boolean; retryAfterSec: number } {
+type Decision = { allowed: boolean; retryAfterSec: number };
+
+const upstashConfigured = !!(
+  process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
+);
+
+if (!upstashConfigured && process.env.NODE_ENV === "production") {
+  console.warn(
+    "[ratelimit] Upstash env vars missing in production; rate limiting is per-invocation only.",
+  );
+}
+
+const limiterCache = new Map<string, Ratelimit>();
+let redis: Redis | null = null;
+
+function upstashLimiter(opts: RateLimitOptions): Ratelimit {
+  const cacheKey = `${opts.name}:${opts.capacity}:${opts.windowSec}`;
+  const cached = limiterCache.get(cacheKey);
+  if (cached) return cached;
+  if (!redis) redis = Redis.fromEnv();
+  const limiter = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(
+      opts.capacity,
+      `${opts.windowSec} s` as `${number} s`,
+    ),
+    prefix: `cipherlink:${opts.name}`,
+    analytics: false,
+  });
+  limiterCache.set(cacheKey, limiter);
+  return limiter;
+}
+
+// In-memory token bucket fallback for local dev.
+type Bucket = { tokens: number; updatedAt: number };
+const memoryBuckets = new Map<string, Bucket>();
+
+function memoryLimit(key: string, opts: RateLimitOptions): Decision {
+  const refillPerSec = opts.capacity / opts.windowSec;
   const now = Date.now();
-  sweep(now, Math.max(60_000, (opts.capacity / opts.refillPerSec) * 1000 * 4));
-
-  const b = buckets.get(key) ?? { tokens: opts.capacity, updatedAt: now };
-  const elapsed = (now - b.updatedAt) / 1000;
-  b.tokens = Math.min(opts.capacity, b.tokens + elapsed * opts.refillPerSec);
-  b.updatedAt = now;
-
-  if (b.tokens >= 1) {
-    b.tokens -= 1;
-    buckets.set(key, b);
+  const bucket = memoryBuckets.get(key) ?? {
+    tokens: opts.capacity,
+    updatedAt: now,
+  };
+  const elapsed = (now - bucket.updatedAt) / 1000;
+  bucket.tokens = Math.min(
+    opts.capacity,
+    bucket.tokens + elapsed * refillPerSec,
+  );
+  bucket.updatedAt = now;
+  if (bucket.tokens >= 1) {
+    bucket.tokens -= 1;
+    memoryBuckets.set(key, bucket);
     return { allowed: true, retryAfterSec: 0 };
   }
-
-  buckets.set(key, b);
-  const needed = 1 - b.tokens;
+  memoryBuckets.set(key, bucket);
   return {
     allowed: false,
-    retryAfterSec: Math.ceil(needed / opts.refillPerSec),
+    retryAfterSec: Math.ceil((1 - bucket.tokens) / refillPerSec),
   };
+}
+
+export async function rateLimit(
+  key: string,
+  opts: RateLimitOptions,
+): Promise<Decision> {
+  const fullKey = `${opts.name}:${key}`;
+  if (upstashConfigured) {
+    const result = await upstashLimiter(opts).limit(fullKey);
+    if (result.success) return { allowed: true, retryAfterSec: 0 };
+    return {
+      allowed: false,
+      retryAfterSec: Math.max(1, Math.ceil((result.reset - Date.now()) / 1000)),
+    };
+  }
+  return memoryLimit(fullKey, opts);
 }
 
 export function clientKey(headers: Headers): string {

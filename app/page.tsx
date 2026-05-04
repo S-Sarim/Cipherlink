@@ -233,8 +233,9 @@ export default function Home() {
 
         <footer className="mt-8 text-center text-xs text-zinc-500 dark:text-zinc-400">
           <a
-            href="https://github.com"
+            href="https://github.com/S-Sarim/Cipherlink"
             className="hover:underline"
+            target="_blank"
             rel="noopener noreferrer"
           >
             Open source

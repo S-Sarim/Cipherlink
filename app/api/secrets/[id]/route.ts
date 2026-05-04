@@ -11,7 +11,11 @@ export async function GET(
   ctx: RouteContext<"/api/secrets/[id]">,
 ) {
   const ip = clientKey(request.headers);
-  const rl = rateLimit(`read:${ip}`, { capacity: 30, refillPerSec: 1 });
+  const rl = await rateLimit(ip, {
+    name: "read",
+    capacity: 30,
+    windowSec: 60,
+  });
   if (!rl.allowed) {
     return Response.json(
       { error: "Too many requests" },

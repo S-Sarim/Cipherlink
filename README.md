@@ -102,11 +102,23 @@ without the URL fragments.
 
 ## Running locally
 
+You need a Postgres database for local development. The simplest paths:
+
+- A local Postgres (`brew install postgresql@16 && createdb cipherlink_dev`), or
+- A free Neon project — same one you'll use for production.
+
 ```bash
+cp .env.example .env
+# Edit .env: set DATABASE_URL and DIRECT_URL to your local or Neon Postgres.
+# Upstash + APP_ORIGIN + CRON_SECRET can be left blank for local dev.
+
 npm install
-npx prisma migrate dev      # creates prisma/dev.db
-npm run dev                 # http://localhost:3000
+npx prisma migrate dev --name init   # generates the migration + applies it
+npm run dev                          # http://localhost:3000
 ```
+
+Without Upstash credentials, rate limiting falls back to an in-process
+token bucket — fine for local dev, useless on serverless.
 
 ## Project layout
 
@@ -116,31 +128,90 @@ app/
   s/[id]/page.tsx           Reveal page (client component)
   api/secrets/route.ts      POST — create
   api/secrets/[id]/route.ts GET  — atomic burn-after-read
+  api/sweep/route.ts        GET  — cron-driven cleanup of expired rows
 lib/
   crypto.ts                 Browser AES-GCM + PBKDF2
   db.ts                     Prisma client singleton
   idgen.ts                  128-bit random IDs
-  ratelimit.ts              Token-bucket rate limiter
+  ratelimit.ts              Upstash Redis sliding window (in-memory fallback)
   schemas.ts                Zod input schemas
 prisma/
-  schema.prisma             Secret model
+  schema.prisma             Secret model (Postgres)
 next.config.ts              Security headers (CSP, HSTS, etc.)
+vercel.json                 Daily cron config for /api/sweep
 ```
 
-## Hardening for production
+## Deploying for free (Vercel + Neon + Upstash)
 
-- **CSP nonce.** This config allows `'unsafe-inline'` for scripts because
-  the dev build emits inline hydration scripts. In production, generate a
-  per-request nonce in `middleware.ts`, propagate it to the response
-  header and to Next's script tags.
-- **Multi-instance rate limiting.** The current limiter is in-process.
-  Behind multiple instances or a serverless deployment, swap
-  `lib/ratelimit.ts` for Redis (e.g. Upstash) or a sliding-window
-  implementation backed by your DB.
-- **Sweeper.** Expired secrets are deleted lazily on read. Add a cron job
-  hitting a `/api/sweep` route to remove expired rows that nobody opens.
-- **Audit log.** If creators want proof of access, hash IP + UA at read
-  time and surface an access log on a creator dashboard. The hashes
-  should not be reversible (use a per-secret salt).
-- **Postgres.** Change `provider = "postgresql"` and re-run
-  `prisma migrate dev`.
+All three services have free tiers that cover a portfolio demo at $0/month
+with no credit card.
+
+**1. Provision Postgres on Neon.** Sign up at neon.tech, create a project.
+From the connection-strings panel, copy:
+
+- the **pooled** connection string → goes into `DATABASE_URL`
+- the **direct** connection string → goes into `DIRECT_URL`
+
+**2. Provision Redis on Upstash.** Sign up at upstash.com, create a Redis
+database (regional, closest to your Vercel region). From the "REST API"
+section copy `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
+
+**3. Generate the Postgres migration locally.**
+
+```bash
+cp .env.example .env
+# Paste your Neon DIRECT_URL into both DATABASE_URL and DIRECT_URL for now.
+npx prisma migrate dev --name init
+git add prisma/migrations && git commit -m "add postgres init migration"
+git push
+```
+
+Vercel needs the migration files committed because production builds run
+`prisma migrate deploy`, which only applies committed migrations and never
+generates new ones.
+
+**4. Generate `CRON_SECRET`.**
+
+```bash
+openssl rand -base64 32
+```
+
+Save the output — you'll paste it into Vercel.
+
+**5. Deploy on Vercel.** Sign up at vercel.com, "Add New Project", import
+the GitHub repo. In the deploy configuration, add environment variables:
+
+| Name | Value |
+| --- | --- |
+| `DATABASE_URL` | Neon pooled connection string |
+| `DIRECT_URL` | Neon direct connection string |
+| `UPSTASH_REDIS_REST_URL` | from Upstash |
+| `UPSTASH_REDIS_REST_TOKEN` | from Upstash |
+| `APP_ORIGIN` | the deployed URL, e.g. `https://cipherlink.vercel.app` |
+| `CRON_SECRET` | the random string from step 4 |
+
+Click Deploy. The build runs `prisma migrate deploy` (applies the migration
+to Neon) and then `next build`. First request can be ~500 ms slower than
+subsequent ones — that's Neon's autosuspend warming up.
+
+**6. Update `APP_ORIGIN` after first deploy** if Vercel assigned a different
+URL than you guessed (e.g. `cipherlink-username.vercel.app`). Then redeploy.
+
+**7. Verify the cron.** Vercel's Cron tab shows the daily `/api/sweep`
+invocation; it returns `{ "deleted": <count> }`.
+
+## Hardening still on the roadmap
+
+- **CSP nonce.** Current config allows `'unsafe-inline'` for scripts. A
+  production deployment should generate a per-request nonce in
+  `middleware.ts`, propagate it to the response header and to Next's
+  `<Script>` tags, and drop `'unsafe-inline'`.
+- **CAPTCHA on create.** A Cloudflare Turnstile widget on the create form
+  + server-side verification would stop scripted DB-fill attacks.
+- **Audit log.** Hash `IP || UA || per-secret-salt` at read time so creators
+  can be shown an irreversible access log without violating zero-knowledge.
+- **File support.** Encrypt files in the browser, store ciphertext in
+  object storage (S3 / R2), keep metadata in Postgres.
+- **Tests.** Round-trip unit tests for `lib/crypto.ts`, an integration test
+  for atomic burn under concurrency, and a Playwright E2E for create →
+  reveal → wipe.
