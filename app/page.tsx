@@ -138,25 +138,30 @@ export default function Home() {
                   ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30"
                   : passwordSet
                     ? "border-red-300 dark:border-red-800 bg-red-50/60 dark:bg-red-950/30"
-                    : "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30"
+                    : "border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/30"
               }`}
             >
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium">Password</span>
+                <span className="text-sm font-medium">
+                  Password{" "}
+                  <span className="text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                    (optional)
+                  </span>
+                </span>
                 <span
                   className={`text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded-full ${
                     passwordOk
                       ? "bg-emerald-200/70 dark:bg-emerald-900/60 text-emerald-900 dark:text-emerald-200"
                       : passwordSet
                         ? "bg-red-200/70 dark:bg-red-900/60 text-red-900 dark:text-red-200"
-                        : "bg-amber-200/70 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200"
+                        : "bg-zinc-200/70 dark:bg-zinc-800/80 text-zinc-700 dark:text-zinc-300"
                   }`}
                 >
                   {passwordOk
                     ? SCORE_LABELS[passwordVerdict.score]
                     : passwordSet
                       ? "Too weak"
-                      : "Recommended"}
+                      : "Skip if channel is trusted"}
                 </span>
               </div>
               <div className="mt-3 flex items-stretch gap-2">
@@ -201,10 +206,12 @@ export default function Home() {
                 </>
               )}
               <p className="mt-3 text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed">
-                Once someone has the URL, password attempts happen in their
-                browser — there is no server-side lockout. <strong>Use a
-                strong password</strong> and share it through a{" "}
-                <strong>different channel</strong> than the link.
+                The link by itself already keeps the secret out of the channel
+                you send it through and self-destructs after one read. Add a
+                password only when you don&rsquo;t fully trust that channel
+                (corp Slack, shared inbox) — and send it via a{" "}
+                <strong>different channel</strong> so neither alone has the
+                secret.
               </p>
             </div>
 
