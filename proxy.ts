@@ -13,21 +13,24 @@ export function proxy(request: NextRequest) {
 
   // `'strict-dynamic'` lets scripts loaded by a nonce'd script also run, which
   // is what Next.js relies on for its bundle splitting. `unsafe-eval` is only
-  // needed in dev (React dev tooling). We allow `unsafe-inline` for styles
-  // because Tailwind injects per-element style blocks; tightening that to a
-  // nonce works but breaks Tailwind's runtime utilities.
+  // needed in dev (React dev tooling). Tailwind injects per-element style
+  // blocks; we keep `style-src 'unsafe-inline'` because nonce-only would
+  // break Tailwind's runtime utilities. There are no workers and no external
+  // fonts, so worker-src and data: in font-src are dropped.
+  //
+  // hash-wasm (Argon2id) compiles a small WASM module at first use. WASM
+  // execution requires `'wasm-unsafe-eval'` under modern CSP rules.
   const csp = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
-    "font-src 'self' data:",
+    "font-src 'self'",
     "connect-src 'self'",
     "frame-ancestors 'none'",
     "form-action 'self'",
     "base-uri 'self'",
     "object-src 'none'",
-    "worker-src 'self' blob:",
     "upgrade-insecure-requests",
   ].join("; ");
 
@@ -37,6 +40,10 @@ export function proxy(request: NextRequest) {
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("Content-Security-Policy", csp);
+  // Prevent the browser from caching HTML — especially the reveal page,
+  // whose response should never be re-served from disk cache. API responses
+  // already set `Cache-Control: no-store` from their handlers.
+  response.headers.set("Cache-Control", "no-store");
   return response;
 }
 

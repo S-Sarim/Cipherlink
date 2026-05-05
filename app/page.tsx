@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { encryptSecret } from "@/lib/crypto";
+import { checkPassword, generateStrongPassword } from "@/lib/password";
 
 const EXPIRY_OPTIONS = [
   { label: "5 minutes", value: 5 * 60 },
@@ -11,6 +12,15 @@ const EXPIRY_OPTIONS = [
 ];
 
 const VIEW_OPTIONS = [1, 2, 5, 10];
+
+const SCORE_LABELS = ["Unusable", "Weak", "Fair", "Good", "Strong"] as const;
+const SCORE_COLORS = [
+  "bg-red-500",
+  "bg-red-400",
+  "bg-amber-400",
+  "bg-emerald-400",
+  "bg-emerald-500",
+] as const;
 
 export default function Home() {
   const [secret, setSecret] = useState("");
@@ -22,6 +32,10 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const passwordVerdict = useMemo(() => checkPassword(password), [password]);
+  const passwordSet = password.length > 0;
+  const passwordOk = passwordSet && passwordVerdict.ok;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -30,9 +44,15 @@ export default function Home() {
       setError("Secret cannot be empty");
       return;
     }
+    if (passwordSet && !passwordVerdict.ok) {
+      setError(
+        passwordVerdict.reason ?? "Password is too weak to protect a secret",
+      );
+      return;
+    }
     setSubmitting(true);
     try {
-      const usePassword = password.length > 0;
+      const usePassword = passwordSet;
       const enc = await encryptSecret(
         secret,
         usePassword ? password : undefined,
@@ -78,7 +98,9 @@ export default function Home() {
     setCopied(false);
   }
 
-  const passwordSet = password.length > 0;
+  function fillStrongPassword() {
+    setPassword(generateStrongPassword(20));
+  }
 
   return (
     <main className="flex flex-1 flex-col items-center justify-center px-4 py-12">
@@ -112,37 +134,77 @@ export default function Home() {
 
             <div
               className={`mt-5 rounded-lg border p-4 transition-colors ${
-                passwordSet
+                passwordOk
                   ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30"
-                  : "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30"
+                  : passwordSet
+                    ? "border-red-300 dark:border-red-800 bg-red-50/60 dark:bg-red-950/30"
+                    : "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30"
               }`}
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium">Password</span>
                 <span
                   className={`text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded-full ${
-                    passwordSet
+                    passwordOk
                       ? "bg-emerald-200/70 dark:bg-emerald-900/60 text-emerald-900 dark:text-emerald-200"
-                      : "bg-amber-200/70 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200"
+                      : passwordSet
+                        ? "bg-red-200/70 dark:bg-red-900/60 text-red-900 dark:text-red-200"
+                        : "bg-amber-200/70 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200"
                   }`}
                 >
-                  {passwordSet ? "Protected" : "Recommended"}
+                  {passwordOk
+                    ? SCORE_LABELS[passwordVerdict.score]
+                    : passwordSet
+                      ? "Too weak"
+                      : "Recommended"}
                 </span>
               </div>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Add a password the recipient already knows"
-                className="mt-3 w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                autoComplete="new-password"
-                maxLength={256}
-              />
+              <div className="mt-3 flex items-stretch gap-2">
+                <input
+                  type="text"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 12 characters, mixed types"
+                  className="flex-1 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoComplete="off"
+                  spellCheck={false}
+                  maxLength={256}
+                />
+                <button
+                  type="button"
+                  onClick={fillStrongPassword}
+                  className="rounded-md border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-xs font-medium px-3 whitespace-nowrap"
+                  title="Generate a 20-character random password"
+                >
+                  Generate
+                </button>
+              </div>
+              {passwordSet && (
+                <>
+                  <div className="mt-3 flex gap-1" aria-hidden="true">
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <div
+                        key={i}
+                        className={`h-1 flex-1 rounded ${
+                          i <= passwordVerdict.score
+                            ? SCORE_COLORS[passwordVerdict.score]
+                            : "bg-zinc-200 dark:bg-zinc-700"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  {!passwordVerdict.ok && passwordVerdict.reason && (
+                    <p className="mt-2 text-xs text-red-700 dark:text-red-300">
+                      {passwordVerdict.reason}
+                    </p>
+                  )}
+                </>
+              )}
               <p className="mt-3 text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed">
-                Share the password through a <strong>different channel</strong>{" "}
-                than the link — voice call, in person, a separate Signal
-                message. Even if someone leaks the URL into a public Slack
-                channel, the secret stays safe without the password.
+                Once someone has the URL, password attempts happen in their
+                browser — there is no server-side lockout. <strong>Use a
+                strong password</strong> and share it through a{" "}
+                <strong>different channel</strong> than the link.
               </p>
             </div>
 
@@ -186,17 +248,17 @@ export default function Home() {
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || (passwordSet && !passwordVerdict.ok)}
               className="mt-6 w-full rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium px-4 py-2.5 transition-colors"
             >
               {submitting ? "Encrypting…" : "Generate link"}
             </button>
 
             <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-              Encryption (AES-GCM-256) happens in your browser. The decryption
-              key lives in the URL fragment after <code>#</code> and is never
-              sent to the server. The recipient&rsquo;s page auto-wipes the
-              decrypted plaintext 30 seconds after reveal.
+              Encryption (AES-GCM-256, Argon2id) happens in your browser. The
+              decryption key lives in the URL fragment after <code>#</code> and
+              is never sent to the server. The recipient&rsquo;s page
+              auto-wipes the decrypted plaintext 30 seconds after reveal.
             </p>
           </form>
         ) : (

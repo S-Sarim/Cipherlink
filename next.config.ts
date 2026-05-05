@@ -11,12 +11,19 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
   },
+  // `preload` qualifies us for the HSTS preload list (hstspreload.org), which
+  // hard-codes HTTPS-only into shipped browsers. Two-year max-age + subdomains
+  // is the gate.
   {
     key: "Strict-Transport-Security",
-    value: "max-age=31536000; includeSubDomains",
+    value: "max-age=63072000; includeSubDomains; preload",
   },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+  // X-Robots-Tag covers JSON / non-HTML responses too, where a <meta robots>
+  // tag obviously can't reach. The metadata `robots` config still emits the
+  // meta tag for HTML.
+  { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive, nosnippet" },
 ];
 
 const nextConfig: NextConfig = {

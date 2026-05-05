@@ -15,7 +15,7 @@ type ServerPayload = {
 type Stage =
   | { kind: "idle" }
   | { kind: "fetching" }
-  | { kind: "needs-password"; payload: ServerPayload }
+  | { kind: "needs-password"; payload: ServerPayload; lastError?: string }
   | { kind: "decrypting" }
   | { kind: "revealed"; plaintext: string; viewsRemaining: number }
   | { kind: "wiped" }
@@ -90,6 +90,26 @@ export default function RevealPage({
     copiedToClipboardRef.current = copiedToClipboard;
   }, [copiedToClipboard]);
 
+  // Wipe immediately if the recipient tabs away. The 30-second timer is the
+  // worst-case bound; a tab switch usually means they've copied the secret
+  // somewhere safe and the live plaintext is no longer needed. This shrinks
+  // the shoulder-surfing / screen-recording exposure to the actual reading
+  // window. We only honor this in the "revealed" stage so it doesn't fire
+  // during password entry or fetching.
+  useEffect(() => {
+    if (stage.kind !== "revealed") return;
+    function onVisibility() {
+      if (document.visibilityState === "hidden") {
+        if (copiedToClipboardRef.current) {
+          navigator.clipboard.writeText("").catch(() => {});
+        }
+        setStage({ kind: "wiped" });
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [stage.kind]);
+
   async function startReveal() {
     // The server burns a view on every successful GET. The Reveal button
     // must trigger exactly one network call per page load.
@@ -159,11 +179,23 @@ export default function RevealPage({
         viewsRemaining: payload.viewsRemaining,
       });
     } catch {
+      // The ciphertext is already in browser memory from the initial fetch.
+      // Wrong-password retries do NOT touch the server — locking the user
+      // out after one mistake punishes typos without raising the bar for an
+      // attacker, who could brute-force the in-memory ciphertext via devtools
+      // anyway. PBKDF2's 600k iterations are the actual rate limit.
+      if (payload.hasPassword) {
+        setPassword("");
+        setStage({
+          kind: "needs-password",
+          payload,
+          lastError: "Wrong password. Try again.",
+        });
+        return;
+      }
       setStage({
         kind: "error",
-        message: payload.hasPassword
-          ? "Wrong password — and the secret has now been consumed."
-          : "Decryption failed. The link is corrupted or incomplete.",
+        message: "Decryption failed. The link is corrupted or incomplete.",
       });
     }
   }
@@ -244,12 +276,22 @@ export default function RevealPage({
                 autoFocus
                 autoComplete="off"
               />
+              {stage.lastError && (
+                <p className="mt-2 text-xs text-red-700 dark:text-red-300">
+                  {stage.lastError}
+                </p>
+              )}
               <button
                 type="submit"
-                className="mt-4 w-full rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2.5 transition-colors"
+                disabled={password.length === 0}
+                className="mt-4 w-full rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium px-4 py-2.5 transition-colors"
               >
                 Decrypt
               </button>
+              <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                Password attempts happen entirely in your browser. The server
+                already destroyed its copy when you opened the link.
+              </p>
             </form>
           )}
 

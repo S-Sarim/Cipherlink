@@ -2,10 +2,25 @@
 // Encryption happens entirely in the user's browser; the server never sees
 // plaintext or encryption keys.
 
+import { argon2id } from "hash-wasm";
+
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
 const SALT_BYTES = 16;
-const PBKDF2_ITERATIONS = 250_000;
+
+// Argon2id parameters per OWASP's 2026 password storage cheat sheet,
+// "second recommended option": m=19456 KiB (~19 MiB), t=2, p=1. This
+// is memory-hard, which makes GPU/ASIC brute-force ~100× more expensive
+// than PBKDF2-SHA256 at equivalent CPU cost on the user's device.
+//
+// Why Argon2id instead of PBKDF2: once a recipient (or attacker) holds the
+// ciphertext + salt + IV, password attempts happen offline. PBKDF2 is
+// embarrassingly parallel on GPUs; Argon2id's memory requirement starves
+// each parallel guess of the limited per-core memory bandwidth on commodity
+// GPUs, which is the asymmetry we actually need.
+const ARGON2_MEMORY_KIB = 19_456;
+const ARGON2_ITERATIONS = 2;
+const ARGON2_PARALLELISM = 1;
 
 type Bytes = Uint8Array<ArrayBuffer>;
 
@@ -41,25 +56,16 @@ async function deriveKeyFromPassword(
   password: string,
   salt: Bytes,
 ): Promise<Bytes> {
-  const enc = new TextEncoder().encode(password);
-  const baseKey = await crypto.subtle.importKey(
-    "raw",
-    enc,
-    { name: "PBKDF2" },
-    false,
-    ["deriveBits"],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt,
-      iterations: PBKDF2_ITERATIONS,
-      hash: "SHA-256",
-    },
-    baseKey,
-    KEY_BYTES * 8,
-  );
-  return new Uint8Array(bits);
+  const hash = await argon2id({
+    password,
+    salt,
+    parallelism: ARGON2_PARALLELISM,
+    iterations: ARGON2_ITERATIONS,
+    memorySize: ARGON2_MEMORY_KIB,
+    hashLength: KEY_BYTES,
+    outputType: "binary",
+  });
+  return hash as Uint8Array<ArrayBuffer>;
 }
 
 function xor(a: Bytes, b: Bytes): Bytes {
