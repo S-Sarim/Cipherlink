@@ -95,8 +95,21 @@ export async function rateLimit(
   return memoryLimit(fullKey, opts);
 }
 
+// Extract the client IP for rate limiting.
+//
+// On Vercel, `x-real-ip` is set by the edge to the actual client IP and is the
+// most trustworthy source. `x-forwarded-for` may contain client-supplied values
+// prepended to the left of the platform-set entry; trusting the leftmost entry
+// lets a single attacker mint unlimited "unique" IPs by spoofing the header.
+// We read the rightmost entry as a fallback because Vercel's edge appends the
+// real client IP to the end of any chain.
 export function clientKey(headers: Headers): string {
+  const real = headers.get("x-real-ip");
+  if (real) return real.trim();
   const fwd = headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
-  return headers.get("x-real-ip") ?? "local";
+  if (fwd) {
+    const parts = fwd.split(",");
+    return parts[parts.length - 1].trim();
+  }
+  return "local";
 }

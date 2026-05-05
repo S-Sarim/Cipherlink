@@ -73,6 +73,14 @@ without the URL fragments.
 - Identity. CipherLink ensures a *single* read; it does not authenticate
   *which* reader. For identity-bound access, layer email magic links on
   top (see `Hardening for production`).
+- **Denial-of-reveal griefing.** Anyone who has the URL can burn the view
+  even without the password — the server consumes a view as soon as the
+  ciphertext is fetched, before the recipient's browser has a chance to
+  prove it can decrypt. With password protection, an attacker holding only
+  the URL cannot read the secret, but they can race the legitimate
+  recipient and destroy it. This is intrinsic to a server that doesn't
+  see the key: the server cannot tell a successful decryption from a
+  failed one without becoming a decryption oracle.
 - Traffic analysis, timing attacks, side channels.
 
 ## Security features at a glance

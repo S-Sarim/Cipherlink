@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -19,11 +20,17 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Touching headers() opts every route under this layout into dynamic
+  // rendering, which is required for the per-request CSP nonce in proxy.ts
+  // to actually reach Next's SSR pass. Static pages are built once and have
+  // no per-request header to read a nonce from.
+  await headers();
+
   return (
     <html
       lang="en"

@@ -1,30 +1,9 @@
 import type { NextConfig } from "next";
 
-const isDev = process.env.NODE_ENV !== "production";
-
-// Content Security Policy.
-//
-// We allow 'unsafe-inline' for scripts because Next.js injects inline
-// hydration scripts. The production-grade hardening is to generate a
-// per-request nonce in middleware and attach it to those scripts; that's
-// documented in the README under "Hardening for production". `unsafe-eval`
-// is only enabled in dev because Next.js dev tooling needs it.
-const csp = [
-  "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-  "frame-ancestors 'none'",
-  "form-action 'self'",
-  "base-uri 'self'",
-  "object-src 'none'",
-  "worker-src 'self' blob:",
-].join("; ");
-
+// Static security headers that don't depend on the request. The CSP is set
+// per-request in `proxy.ts` so each response gets a fresh nonce; setting it
+// here would conflict with that.
 const securityHeaders = [
-  { key: "Content-Security-Policy", value: csp },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "no-referrer" },
